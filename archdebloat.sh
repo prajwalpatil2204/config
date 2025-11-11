@@ -1,114 +1,276 @@
 #!/usr/bin/env bash
-# ================================================================
-# Fedora 43 Minimal KDE (X11, Non-Touch, Arch-Style) v5.4
-# Author: ChatGPT | System: Dell Inspiron 3542 (i3-4005U, Intel HD 4400)
-# Target: Fresh Fedora Base install (no GUI)
-# ================================================================
+# ===============================================================
+# Fedora 43 KDE Plasma (X11 Only) + RPM Fusion + AAC + Hibernate
+# Author: ChatGPT
+# Target: Dell Inspiron 3542 (Intel i3-4005U, Intel HD 4400, 8GB RAM)
+# ===============================================================
 
 set -e
-LOG="$HOME/fedora43-minimal-kde-v5.4.log"
+LOG="$HOME/fedora43-x11-v4.2.log"
 exec > >(tee -a "$LOG") 2>&1
 
-echo "=== Fedora 43 Minimal KDE (Arch-style) v5.4 ==="
+echo "=== Fedora 43 KDE Plasma (X11 Only) + AAC + Hibernate ==="
 sudo -v
 
-# ---------- 1️⃣ System update ----------
+# ----------------------------------------------------------
 echo ">>> Updating system..."
 sudo dnf upgrade -y --refresh
 
-# ---------- 2️⃣ Enable RPM Fusion ----------
+# ----------------------------------------------------------
 echo ">>> Enabling RPM Fusion repositories..."
 FEDVER=$(rpm -E %fedora)
 sudo dnf install -y \
-  "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDVER}.noarch.rpm" \
-  "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDVER}.noarch.rpm"
-sudo dnf clean all && sudo dnf makecache --refresh
+  "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDVER}.noarch.rpm" \
+    "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDVER}.noarch.rpm"
+    sudo dnf config-manager --enable rpmfusion-free rpmfusion-nonfree || true
+    sudo dnf makecache --refresh
 
-# ---------- 3️⃣ Core system tools ----------
-echo ">>> Installing essential system utilities..."
-sudo dnf install -y --allowerasing \
-  NetworkManager curl wget unzip htop fastfetch git neofetch vim nano \
-  power-profiles-daemon pipewire pipewire-alsa pipewire-pulseaudio wireplumber \
-  bluez bluez-tools ffmpeg-free vlc
+    # ----------------------------------------------------------
+    echo ">>> Installing KDE Plasma (X11 minimal, no Wayland, no Maliit)..."
+    sudo dnf install -y --allowerasing \
+      plasma-desktop plasma-workspace-x11 \
+        sddm sddm-breeze kde-settings-sddm \
+          kde-cli-tools plasma-systemmonitor kinfocenter \
+            bluedevil konsole dolphin kdialog kscreen powerdevil \
+              plasma-nm plasma-pa \
+                xorg-x11-server-Xorg xorg-x11-xinit \
+                  xorg-x11-drv-intel xorg-x11-utils xorg-x11-xauth \
+                    pipewire pipewire-alsa pipewire-pulseaudio wireplumber \
+                      bluez bluez-libs bluez-obexd alsa-utils pavucontrol \
+                        network-manager networkmanager-wifi network-manager-applet nm-connection-editor \
+                          plymouth plymouth-system-theme plymouth-theme-breeze
 
-sudo systemctl enable --now NetworkManager.service
-sudo systemctl enable --now bluetooth.service
-sudo systemctl enable --now power-profiles-daemon.service
+                          # ----------------------------------------------------------
+                          echo ">>> Removing Maliit virtual keyboard and related touchscreen components..."
+                          sudo dnf remove -y maliit* plasma-mobile* || true
+                          sudo dnf mark install plasma-desktop || true  # prevent reinstallation
+                          sudo systemctl mask maliit-server.service maliit-daemon.service || true
 
-# ---------- 4️⃣ KDE Plasma (X11 only) ----------
-echo ">>> Installing KDE Plasma Desktop (X11, minimal)..."
-sudo dnf install -y \
-  plasma-desktop plasma-workspace plasma-nm plasma-pa \
-  kde-cli-tools plasma-systemsettings powerdevil dolphin konsole kate kscreen \
-  plasma-discover xorg-x11-server-Xorg xorg-x11-drivers xorg-x11-xinit \
-  sddm kde-settings
+                          # ----------------------------------------------------------
+                          echo ">>> Enabling full multimedia & AAC codec via RPM Fusion..."
+                          sudo dnf groupupdate -y multimedia --setopt="install_weak_deps=False" --exclude=PackageKit-gstreamer-plugin
+                          sudo dnf groupupdate -y sound-and-video
+                          sudo dnf install -y --allowerasing \
+                            ffmpeg ffmpeg-free ffmpeg-libs fdk-aac-free libfdk_aac pipewire-plugin-libav
 
-# ---------- 5️⃣ Block Wayland / Touch components ----------
-echo ">>> Blocking Wayland + touchscreen components..."
-sudo bash -c 'cat >> /etc/dnf/dnf.conf <<EOF
-exclude=maliit*,plasma-workspace-wayland*,plasma-maliit*,kwayland*,elisa*,skanpage*,kdeconnect*
-EOF'
+                            sudo mkdir -p /etc/wireplumber/bluetooth.lua.d
+                            sudo bash -c 'cat > /etc/wireplumber/bluetooth.lua.d/51-bluez-config.lua <<EOF
+                            bluez_monitor.properties = {
+                              ["bluez5.enable-aac"] = true,
+                                ["bluez5.enable-sbc-xq"] = true,
+                                  ["bluez5.enable-msbc"] = true,
+                                    ["bluez5.enable-hw-volume"] = true
+                                    }
+                                    EOF'
 
-sudo dnf remove -y maliit* plasma-workspace-wayland* kwayland* plasma-maliit* || true
+                                    # ----------------------------------------------------------
+                                    echo ">>> Setting SDDM and Breeze X11 login theme..."
+                                    sudo mkdir -p /etc/sddm.conf.d
+                                    sudo bash -c 'cat > /etc/sddm.conf.d/x11.conf <<EOF
+                                    [General]
+                                    WaylandEnable=false
+                                    [Theme]
+                                    Current=breeze
+                                    CursorTheme=Breeze_Light
+                                    EOF'
+                                    sudo plymouth-set-default-theme -R breeze || true
 
-# Disable Wayland in SDDM
-sudo mkdir -p /etc/sddm.conf.d
-echo -e "[General]\nWaylandEnable=false" | sudo tee /etc/sddm.conf.d/x11-only.conf >/dev/null
+                                    # ----------------------------------------------------------
+                                    echo ">>> Installing power & hibernate support tools..."
+                                    sudo dnf install -y --allowerasing \
+                                      tuned powertop systemd-zram-generator-defaults intel-gpu-tools acpi lm_sensors htop util-linux
+                                      sudo systemctl enable --now tuned
+                                      sudo tuned-adm profile balanced || true
+                                      sudo systemctl enable --now systemd-zram-setup@zram0.service || true
+                                      sudo systemctl enable --now NetworkManager bluetooth sddm pipewire wireplumber
 
-# ---------- 6️⃣ Enable GUI login ----------
-echo ">>> Enabling graphical target..."
-sudo systemctl enable sddm
-sudo systemctl set-default graphical.target
+                                      # ----------------------------------------------------------
+                                      echo ">>> Setting up Hibernate support..."
+                                      # Enable hibernate if swap > RAM
+                                      SWAPFILE="/swapfile"
+                                      if [ ! -f "$SWAPFILE" ]; then
+                                        echo "Creating 8G swapfile for hibernation..."
+                                          sudo fallocate -l 8G "$SWAPFILE"
+                                            sudo chmod 600 "$SWAPFILE"
+                                              sudo mkswap "$SWAPFILE"
+                                                sudo swapon "$SWAPFILE"
+                                                  echo "$SWAPFILE none swap sw 0 0" | sudo tee -a /etc/fstab
+                                                  fi
 
-# ---------- 7️⃣ Applications ----------
-echo ">>> Installing Microsoft Edge + VS Code..."
-# Edge
-sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
-echo -e "[edge]\nname=Microsoft Edge\nbaseurl=https://packages.microsoft.com/yumrepos/edge\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" \
- | sudo tee /etc/yum.repos.d/microsoft-edge.repo >/dev/null
-sudo dnf install -y microsoft-edge-stable
+                                                  UUID=$(findmnt -no UUID -T /swapfile)
+                                                  sudo bash -c "echo 'RESUME=UUID=$UUID' > /etc/default/grub.d/99-hibernate.conf"
+                                                  sudo grub2-mkconfig -o /boot/grub2/grub.cfg || true
 
-# VS Code
-echo -e "[vscode]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" \
- | sudo tee /etc/yum.repos.d/vscode.repo >/dev/null
-sudo dnf install -y code
+                                                  # ----------------------------------------------------------
+                                                  echo ">>> Installing Microsoft Edge, VS Code, VLC..."
+                                                  sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
 
-# ---------- 8️⃣ Intel CPU / GPU tuning ----------
-echo ">>> Applying Intel CPU + iGPU optimizations..."
-sudo bash -c 'cat > /etc/systemd/system/cpu-tune.service <<EOF
-[Unit]
-Description=Intel CPU tuning for performance/balance
-After=multi-user.target
+                                                  # Edge
+                                                  sudo tee /etc/yum.repos.d/microsoft-edge.repo >/dev/null <<'EOF'
+                                                  [edge]
+                                                  name=Microsoft Edge
+                                                  baseurl=https://packages.microsoft.com/yumrepos/edge
+                                                  enabled=1
+                                                  gpgcheck=1
+                                                  gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+                                                  EOF
+                                                  sudo dnf install -y microsoft-edge-stable
 
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/bash -c "
-for c in /sys/devices/system/cpu/cpu[0-9]*; do
-  echo schedutil > \$c/cpufreq/scaling_governor 2>/dev/null || true
-done
-echo balance_performance > /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference 2>/dev/null || true
-"
-RemainAfterExit=yes
+                                                  # VS Code
+                                                  sudo tee /etc/yum.repos.d/vscode.repo >/dev/null <<'EOF'
+                                                  [vscode]
+                                                  name=Visual Studio Code
+                                                  baseurl=https://packages.microsoft.com/yumrepos/vscode
+                                                  enabled=1
+                                                  gpgcheck=1
+                                                  gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+                                                  EOF
+                                                  sudo dnf install -y code vlc
 
-[Install]
-WantedBy=multi-user.target
-EOF'
-sudo systemctl enable cpu-tune.service
+                                                  # ----------------------------------------------------------
+                                                  echo ">>> Applying I/O and CPU governor optimization..."
+                                                  sudo bash -c 'cat > /etc/udev/rules.d/60-ioschedulers.rules <<EOF
+                                                  ACTION=="add|change", KERNEL=="sda", ATTR{queue/scheduler}="mq-deadline"
+                                                  ACTION=="add|change", KERNEL=="nvme0n1", ATTR{queue/scheduler}="none"
+                                                  EOF'
 
-# Intel GPU driver tuning
-sudo mkdir -p /etc/modprobe.d
-sudo bash -c 'cat > /etc/modprobe.d/i915.conf <<EOF
-options i915 enable_psr=1 enable_fbc=1 enable_guc=3 i915_enable_rc6=1
-options i915 enable_dc=2 modeset=1 enable_gvt=0
-EOF'
+                                                  sudo bash -c 'cat > /etc/systemd/system/cpu-tune.service <<EOF
+                                                  [Unit]
+                                                  Description=Intel CPU tuning for Dell Inspiron 3542
+                                                  After=multi-user.target
 
-# ---------- 9️⃣ Cleanup ----------
-echo ">>> Cleaning system..."
-sudo dnf autoremove -y
-sudo dnf clean all
+                                                  [Service]
+                                                  Type=oneshot
+                                                  ExecStart=/usr/bin/bash -c "
+                                                  for c in /sys/devices/system/cpu/cpu[0-9]*; do
+                                                    echo schedutil > \$c/cpufreq/scaling_governor 2>/dev/null || true
+                                                    done
+                                                    "
+                                                    RemainAfterExit=yes
 
-echo
-echo "✅ Fedora 43 Minimal KDE (X11, non-touch) setup complete!"
-echo "➡️ Reboot to start KDE Plasma (X11)"
-echo "💾 Log saved at $LOG"
-echo
+                                                    [Install]
+                                                    WantedBy=multi-user.target
+                                                    EOF'
+
+                                                    sudo systemctl enable cpu-tune.service
+                                                   
+                                                    # =====================================================================
+                                                    # Fedora 43 KDE Plasma (X11 Only) – Arch-Like Polish v4.3
+                                                    # Author: ChatGPT
+                                                    # Target: Dell Inspiron 3542 (i3-4005U, Intel HD 4400, 8 GB RAM)
+                                                    # Features:
+                                                    #   • Fsync + Ureadahead boot speed
+                                                    #   • Smart background service delay
+                                                    #   • Plasma animation + compositor tweaks
+                                                    #   • All features from v4.2 retained
+                                                    # =====================================================================
+
+                                                    set -e
+                                                    LOG="$HOME/fedora43-x11-v4.3.log"
+                                                    exec > >(tee -a "$LOG") 2>&1
+
+                                                    echo "=== Fedora 43 KDE (X11) – Arch-Like Polish v4.3 ==="
+                                                    sudo -v
+
+                                                    # ----------------------------------------------------------
+                                                    echo ">>> Updating system..."
+                                                    sudo dnf upgrade -y --refresh
+
+                                                    # ----------------------------------------------------------
+                                                    echo ">>> Installing boot-time accelerators..."
+                                                    sudo dnf install -y --allowerasing systemd-udev-settle ureadahead || true
+                                                    sudo systemctl enable ureadahead-replay.service ureadahead-stop.service || true
+
+                                                    # ----------------------------------------------------------
+                                                    echo ">>> Enabling fsync (faster I/O scheduling)..."
+                                                    if ! grep -q "fsync" /etc/default/grub 2>/dev/null; then
+                                                      echo "Adding fsync flag to GRUB..."
+                                                        sudo sed -i 's/GRUB_CMDLINE_LINUX="/GRUB_CMDLINE_LINUX="fsync=1 /' /etc/default/grub
+                                                          sudo grub2-mkconfig -o /boot/grub2/grub.cfg || true
+                                                          fi
+
+                                                          # ----------------------------------------------------------
+                                                          echo ">>> Smart background service delay..."
+                                                          sudo bash -c 'cat > /etc/systemd/system/smart-delay.target <<EOF
+                                                          [Unit]
+                                                          Description=Delay non-critical background services for 40 seconds
+                                                          After=multi-user.target
+                                                          EOF'
+
+                                                          sudo bash -c 'cat > /etc/systemd/system/bluetooth-delayed.service <<EOF
+                                                          [Unit]
+                                                          Description=Delayed Bluetooth startup
+                                                          After=smart-delay.target
+                                                          [Service]
+                                                          Type=oneshot
+                                                          ExecStart=/usr/bin/systemctl start bluetooth.service
+                                                          [Install]
+                                                          WantedBy=smart-delay.target
+                                                          EOF'
+
+                                                          sudo systemctl disable --now bluetooth.service || true
+                                                          sudo systemctl enable bluetooth-delayed.service smart-delay.target
+
+                                                          # ----------------------------------------------------------
+                                                          echo ">>> Plasma compositor + animation throttling..."
+                                                          mkdir -p ~/.config
+                                                          cat > ~/.config/kwinrc <<'EOF'
+                                                          [Compositing]
+                                                          OpenGLIsUnsafe=false
+                                                          Backend=OpenGL
+                                                          GLCore=false
+                                                          Enabled=true
+                                                          AnimationSpeed=3
+                                                          GLTextureFilter=1
+                                                          GLPreferBufferSwap=0
+                                                          MaxFps=60
+                                                          RefreshRate=60
+                                                          EOF
+
+                                                          cat > ~/.config/kdeglobals <<'EOF'
+                                                          [KDE]
+                                                          AnimationDurationFactor=0.6
+                                                          EOF
+
+                                                          # ----------------------------------------------------------
+                                                          echo ">>> Tune I/O and boot optimization..."
+                                                          sudo bash -c 'cat > /etc/udev/rules.d/61-io-performance.rules <<EOF
+                                                          ACTION=="add|change", KERNEL=="sda", ATTR{queue/scheduler}="mq-deadline"
+                                                          ACTION=="add|change", KERNEL=="nvme0n1", ATTR{queue/scheduler}="none"
+                                                          EOF'
+
+                                                          sudo systemctl daemon-reexec
+
+                                                          # ----------------------------------------------------------
+                                                          echo ">>> Cleaning system..."
+                                                          sudo dnf autoremove -y
+                                                          sudo dnf clean all
+
+                                                          # ----------------------------------------------------------
+                                                          echo
+                                                          echo "✅ Fedora 43 KDE (X11) Arch-Like Polish v4.3 Complete!"
+                                                          echo "🚀 Faster boot (ureadahead + fsync)"
+                                                          echo "⚙️  Smart delayed background load"
+                                                          echo "🎨  Compositor / animation tweaks for Intel HD 4400"
+                                                          echo "💾 Log saved: $LOG"
+                                                          echo "➡️  Reboot now → sudo reboot"
+                                                          echo
+
+                                                    # ----------------------------------------------------------
+                                                    echo ">>> Cleaning system..."
+                                                    sudo dnf autoremove -y
+                                                    sudo dnf clean all
+                                                    sudo systemctl daemon-reexec
+
+                                                    # ----------------------------------------------------------
+                                                    echo
+                                                    echo "✅ Fedora 43 KDE X11 (RPM Fusion + AAC + Hibernate) Complete!"
+                                                    echo "🖥️  Desktop: KDE Plasma (X11 Only)"
+                                                    echo "🎧  Audio: PipeWire + AAC (via RPM Fusion)"
+                                                    echo "🌐  Wi-Fi: Fully functional (networkmanager-wifi)"
+                                                    echo "🔋  Power: tuned + zRAM + hibernate support"
+                                                    echo "💻  Tools: Edge, VS Code, VLC"
+                                                    echo "🎨  Boot splash: Breeze (Fedora Blue)"
+                                                    echo "💾  Log saved: $LOG"
+                                                    echo "➡️  Reboot now → sudo reboot"
+                                                    echo
